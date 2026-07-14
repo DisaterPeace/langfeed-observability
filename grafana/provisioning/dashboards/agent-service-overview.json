@@ -1,0 +1,282 @@
+{
+  "uid": "agent-service-overview",
+  "title": "agent-service — Multi-Owner Health Overview",
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Runs — success",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(runs_total{outcome=\"success\"}[$__range]))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "Runs — failure",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(runs_total{outcome=\"failure\"}[$__range]))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "red", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "title": "Avg run duration (s)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(run_duration_seconds_sum[$__range])) / sum(last_over_time(run_duration_seconds_count[$__range]))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "Est. LLM cost (USD)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(llm_cost_usd_total[$__range]))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "yellow", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "title": "Tokens over time (by owner · type)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (agent_id, gen_ai_token_type) (last_over_time(gen_ai_client_token_usage_sum[$__interval]))",
+          "legendFormat": "{{agent_id}} · {{gen_ai_token_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "title": "Avg duration by owner (s)",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (agent_id) (last_over_time(agent_duration_seconds_sum[$__range])) / sum by (agent_id) (last_over_time(agent_duration_seconds_count[$__range]))",
+          "legendFormat": "{{agent_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "title": "Est. cost over time (USD)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (agent_id) (last_over_time(llm_cost_usd_total[$__interval]))", "legendFormat": "{{agent_id}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "title": "Runs over time (by outcome)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (last_over_time(runs_total[$__interval]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 9,
+      "title": "Avg bug recall (quality)",
+      "type": "gauge",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(eval_bug_recall_sum[$__range])) / sum(last_over_time(eval_bug_recall_count[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null },
+          { "color": "yellow", "value": 0.5 },
+          { "color": "green", "value": 0.8 }
+        ] } }, "overrides": [] }
+    },
+    {
+      "id": 10,
+      "title": "Eval scores over time",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(eval_bug_recall_sum[$__interval])) / sum(last_over_time(eval_bug_recall_count[$__interval]))",
+          "legendFormat": "bug_recall (deterministic)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(last_over_time(eval_judge_quality_sum[$__interval])) / sum(last_over_time(eval_judge_quality_count[$__interval]))",
+          "legendFormat": "llm_judge_quality (Langfuse)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "title": "Avg LLM-judge quality (Langfuse)",
+      "type": "gauge",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(eval_judge_quality_sum[$__range])) / sum(last_over_time(eval_judge_quality_count[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null },
+          { "color": "yellow", "value": 0.4 },
+          { "color": "green", "value": 0.7 }
+        ] } }, "overrides": [] }
+    },
+    {
+      "id": 12,
+      "title": "LLM call latency P95 (s)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (last_over_time(gen_ai_client_operation_duration_seconds_bucket[$__range])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 13,
+      "title": "Run latency P95 (s)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (last_over_time(run_duration_seconds_bucket[$__range])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 14,
+      "title": "TTFT P95 (s)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le) (last_over_time(gen_ai_server_time_to_first_token_seconds_bucket[$__range])))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "purple", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 15,
+      "title": "Output tokens/sec",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[$__range])) / sum(last_over_time(gen_ai_client_operation_duration_seconds_sum[$__range]))", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 16,
+      "title": "Error rate",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "(sum(last_over_time(runs_total{outcome=\"failure\"}[$__range])) or vector(0)) / clamp_min(sum(last_over_time(runs_total[$__range])), 1)", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.1 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 17,
+      "title": "Est. cost per run (USD)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(last_over_time(llm_cost_usd_total[$__range])) / clamp_min(sum(last_over_time(runs_total[$__range])), 1)", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [ { "color": "yellow", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 18,
+      "title": "Finish reasons (truncation = length)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 51 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (finish_reason) (last_over_time(gen_ai_finish_reasons_total[$__interval]))", "legendFormat": "{{finish_reason}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 19,
+      "title": "Run throughput (runs per interval)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 51 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "count(group by (instance) (last_over_time(runs_total[$__interval])))", "legendFormat": "runs", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 20,
+      "title": "Recent traces (stream ① — Tempo)",
+      "type": "traces",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 60 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        { "refId": "A", "queryType": "traceql", "query": "{resource.service.name=\"agent-service\"}", "limit": 20, "tableType": "traces" }
+      ]
+    }
+  ]
+}

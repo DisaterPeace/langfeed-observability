@@ -1,0 +1,23 @@
+# ============================================================================
+# Grafana datasource provisioning. Dropping this file in
+# /etc/grafana/provisioning/datasources makes Grafana auto-create these
+# datasources on startup — no manual UI clicking, fully reproducible.
+# ============================================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy                 # Grafana server fetches (not the browser)
+    url: http://prometheus:9090
+    isDefault: true
+
+  # Stream-① trace backend: lets Grafana show span trees / flame graphs
+  # (Explore -> Tempo, and the "Recent traces" dashboard panel).
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200

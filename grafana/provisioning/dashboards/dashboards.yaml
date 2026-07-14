@@ -1,0 +1,17 @@
+# ============================================================================
+# Dashboard PROVIDER config — tells Grafana "load dashboard JSON files from
+# this folder on disk" instead of you clicking a dashboard together by hand.
+# Same idea as datasources.yaml, one level up.
+# ============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: agent-service
+    orgId: 1
+    folder: ""                     # "" = show at the top level, not in a subfolder
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10       # re-scan this folder every 10s for changes
+    options:
+      path: /etc/grafana/provisioning/dashboards

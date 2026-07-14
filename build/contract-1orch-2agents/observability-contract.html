@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Observability Integration Contract — Agent Owners (1 orchestrator + 2 agents)</title>
+<style>
+  @page { size: letter; margin: 0.6in; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, "Segoe UI", sans-serif; color: #1e293b; font-size: 11px;
+         line-height: 1.45; max-width: 8.1in; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 21px; color: #0f172a; text-align: center; margin: 0 0 4px; }
+  .sub { text-align: center; color: #475569; font-size: 11px; margin: 0 0 6px; }
+  .streams { text-align:center; color:#334155; font-size:11px; margin: 0 0 8px; }
+  .streams b.s1 { color:#1d4ed8; } .streams b.s2 { color:#047857; }
+  .topo { text-align:center; margin: 0 0 14px; }
+  .topo span { display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:12px;
+               padding:2px 10px; margin:2px 3px; font-size:10px; color:#334155; }
+  h2 { font-size: 15px; color: #0f172a; margin: 16px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 3px; }
+  h3 { font-size: 12.5px; color: #0f172a; margin: 14px 0 6px; }
+  .diagram { text-align: center; margin: 8px 0 12px; }
+  .diagram svg { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; background:#fff; }
+  .attrs { font-size: 10.5px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; }
+  .normative { border-left: 5px solid; border-radius: 5px; padding: 10px 16px 12px; margin: 14px 0; }
+  .normative.s1 { border-color: #1d4ed8; background: #eff6ff; }
+  .normative.s2 { border-color: #047857; background: #ecfdf5; }
+  .normative h2 { border: none; margin: 0 0 4px; }
+  .badge { display: inline-block; font-size: 9.5px; font-weight: 700; padding: 1px 6px;
+           border-radius: 3px; letter-spacing: .5px; vertical-align: middle; margin-right: 8px; border: 1.5px solid; }
+  .badge.s1 { color: #1d4ed8; border-color: #1d4ed8; } .badge.s2 { color: #047857; border-color: #047857; }
+  .must { font-size: 10.5px; font-style: italic; color: #475569; margin: 2px 0 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 10px; margin: 8px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 4px 8px; text-align: left; vertical-align: top; }
+  th { background: #dbe4ef; font-weight: 700; }
+  code { font-family: Consolas, "Courier New", monospace; background: #eef2f7; padding: 1px 4px; border-radius: 3px; font-size: 10px; }
+  pre { background: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #4338ca; border-radius: 4px;
+        padding: 10px 14px; font-family: Consolas, "Courier New", monospace; font-size: 9.5px; line-height: 1.4;
+        white-space: pre-wrap; overflow-x: auto; }
+  .scopenote { border-left: 4px solid #ca8a04; background: #fef9c3; border-radius: 4px; padding: 8px 12px; font-size: 10px; margin: 10px 0; }
+  ol, ul { margin: 6px 0 4px 20px; padding: 0; }
+  li { margin: 3px 0; }
+</style></head>
+<body>
+
+  <h1>Observability Integration Contract &mdash; Agent Owners</h1>
+  <div class="sub">agent-service platform &middot; push-only telemetry (each owner exports; owners never run a collector or expose a scrape endpoint)</div>
+  <div class="streams">
+    <b class="s1">Stream &#9312;</b> OTLP metrics + spans (bearer) &rarr; shared Collector &rarr; Prometheus / Tempo &rarr; Grafana
+    &nbsp;&nbsp;|&nbsp;&nbsp;
+    <b class="s2">Stream &#9313;</b> LLM traces &rarr; each owner&rsquo;s own Langfuse project (direct)
+  </div>
+  <div class="topo">
+    <span>1 orchestrator</span><span>2 owners &middot; repo-analyzer + bug-detector</span><span>2 streams</span><span>3 backends &middot; Prometheus &middot; Tempo &middot; Grafana</span>
+  </div>
+  <div class="sub" style="margin:0 0 12px; font-size:10px; color:#64748b;">Contract v1 &middot; agent-service platform &middot; new mandatory metrics are announced in this contract first &middot; secrets are issued out-of-band, never printed in this document</div>
+
+  <!-- PAGE 1 -->
+  <h2>Architecture</h2>
+
+  <div class="diagram">
+  <svg viewBox="0 0 1120 600" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+    <defs>
+      <marker id="ad" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#334155"/></marker>
+      <marker id="ag" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#047857"/></marker>
+      <marker id="agr" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="30" text-anchor="middle" font-size="22" font-weight="bold" fill="#0f172a">High-Level — Each Agent Owner Pushes Two Streams</text>
+    <text x="560" y="52" text-anchor="middle" font-size="12.5" fill="#64748b">Push-only: each owner exports to the shared Collector · owners never run a collector or expose a scrape endpoint</text>
+
+    <!-- legend -->
+    <line x1="690" y1="76" x2="725" y2="76" stroke="#334155" stroke-width="2.5" marker-end="url(#ad)"/>
+    <text x="732" y="80" font-size="11.5" fill="#334155">① OTLP metrics + spans → shared Collector</text>
+    <line x1="690" y1="98" x2="725" y2="98" stroke="#047857" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#ag)"/>
+    <text x="732" y="102" font-size="11.5" fill="#047857">② LLM traces → each owner’s Langfuse project</text>
+
+    <!-- agent host panel -->
+    <rect x="40" y="115" width="250" height="310" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="165" y="137" text-anchor="middle" font-size="12" font-weight="bold" fill="#1d4ed8">agent host · one deployment</text>
+
+    <rect x="60" y="150" width="210" height="52" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="165" y="172" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0f172a">Orchestrator</text>
+    <text x="165" y="190" text-anchor="middle" font-size="10.5" fill="#475569">mints and owns session.id</text>
+
+    <rect x="60" y="222" width="210" height="52" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="165" y="243" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0f172a">owner · repo-analyzer</text>
+    <text x="165" y="260" text-anchor="middle" font-size="10" fill="#475569">service.name = agent.id</text>
+
+    <rect x="60" y="294" width="210" height="52" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="165" y="315" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0f172a">owner · bug-detector</text>
+    <text x="165" y="332" text-anchor="middle" font-size="10" fill="#475569">service.name = agent.id</text>
+
+    <text x="165" y="374" text-anchor="middle" font-size="10" font-style="italic" fill="#64748b">OTel SDK + Langfuse SDK per owner</text>
+
+    <!-- dispatch spine (orchestrator -> agents) on the left -->
+    <path d="M60,176 L46,176 L46,320" stroke="#94a3b8" stroke-width="1.2" fill="none"/>
+    <line x1="46" y1="248" x2="60" y2="248" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#agr)"/>
+    <line x1="46" y1="320" x2="60" y2="320" stroke="#94a3b8" stroke-width="1.2" marker-end="url(#agr)"/>
+
+    <!-- collector -->
+    <rect x="360" y="175" width="170" height="70" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+    <text x="445" y="203" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0f172a">OTel Collector</text>
+    <text x="445" y="221" text-anchor="middle" font-size="10" fill="#475569">shared · TLS + bearer</text>
+
+    <!-- stream 1: orchestrator + agents -> collector -->
+    <line x1="270" y1="178" x2="358" y2="186" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="286" y="171" font-size="8.5" fill="#475569">run-level metrics</text>
+    <line x1="270" y1="236" x2="358" y2="198" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <line x1="270" y1="308" x2="358" y2="228" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="305" y="212" font-size="12" fill="#334155">①</text>
+
+    <!-- collector -> prometheus / tempo -->
+    <rect x="610" y="150" width="150" height="55" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+    <text x="685" y="173" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">Prometheus</text>
+    <text x="685" y="190" text-anchor="middle" font-size="9.5" fill="#475569">metrics · job = agent.id</text>
+
+    <rect x="610" y="235" width="150" height="55" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+    <text x="685" y="258" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">Tempo</text>
+    <text x="685" y="275" text-anchor="middle" font-size="9.5" fill="#475569">spans · one trace / run</text>
+
+    <line x1="530" y1="196" x2="608" y2="177" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="548" y="182" font-size="9.5" fill="#475569">metrics</text>
+    <line x1="530" y1="226" x2="608" y2="262" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <text x="548" y="248" font-size="9.5" fill="#475569">spans</text>
+
+    <!-- grafana -->
+    <rect x="850" y="182" width="160" height="72" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+    <text x="930" y="212" text-anchor="middle" font-size="13" font-weight="bold" fill="#0f172a">Grafana</text>
+    <text x="930" y="230" text-anchor="middle" font-size="9.5" fill="#475569">dashboards + trace view</text>
+    <line x1="760" y1="177" x2="848" y2="205" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+    <line x1="760" y1="262" x2="848" y2="232" stroke="#334155" stroke-width="2" marker-end="url(#ad)"/>
+
+    <!-- stream 2: agents -> langfuse (lower lane, no crossings) -->
+    <rect x="560" y="380" width="430" height="170" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+    <text x="775" y="404" text-anchor="middle" font-size="12" font-weight="bold" fill="#047857">Langfuse · one project per owner (isolation + billing)</text>
+
+    <rect x="585" y="420" width="185" height="112" rx="8" fill="#ffffff" stroke="#047857" stroke-width="1.5"/>
+    <text x="677" y="450" text-anchor="middle" font-size="10.5" fill="#475569">project</text>
+    <text x="677" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">repo-analyzer</text>
+    <text x="677" y="492" text-anchor="middle" font-size="10" fill="#047857">its traces + session.id</text>
+
+    <rect x="785" y="420" width="185" height="112" rx="8" fill="#ffffff" stroke="#047857" stroke-width="1.5"/>
+    <text x="877" y="450" text-anchor="middle" font-size="10.5" fill="#475569">project</text>
+    <text x="877" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">bug-detector</text>
+    <text x="877" y="492" text-anchor="middle" font-size="10" fill="#047857">its traces + eval scores</text>
+
+    <path d="M270,262 L300,262 L300,458 L558,458" stroke="#047857" stroke-width="2" stroke-dasharray="6 4" fill="none" marker-end="url(#ag)"/>
+    <path d="M270,334 L320,334 L320,478 L558,478" stroke="#047857" stroke-width="2" stroke-dasharray="6 4" fill="none" marker-end="url(#ag)"/>
+    <text x="306" y="392" font-size="12" fill="#047857">②</text>
+
+    <!-- footer -->
+    <text x="560" y="582" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0f172a">Correlation: agent.id (which owner) + session.id (which run) — resolved in Tempo + each Langfuse project · no separate state store</text>
+  </svg>
+  </div>
+
+  <div class="diagram">
+  <svg viewBox="0 0 1120 470" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">
+    <defs>
+      <marker id="ld" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#334155"/></marker>
+      <marker id="lg" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 Z" fill="#047857"/></marker>
+    </defs>
+
+    <text x="560" y="30" text-anchor="middle" font-size="22" font-weight="bold" fill="#0f172a">Low-Level — In-Process Path Inside One Agent Owner</text>
+    <text x="560" y="52" text-anchor="middle" font-size="12.5" fill="#64748b">Every owner runs this same path; owners differ only by identity (agent.id) and their Langfuse project.</text>
+
+    <line x1="330" y1="74" x2="365" y2="74" stroke="#334155" stroke-width="2.5" marker-end="url(#ld)"/>
+    <text x="372" y="78" font-size="11.5" fill="#334155">① OTLP → shared Collector</text>
+    <line x1="620" y1="74" x2="655" y2="74" stroke="#047857" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#lg)"/>
+    <text x="662" y="78" font-size="11.5" fill="#047857">② LLM trace → this owner’s Langfuse project</text>
+
+    <!-- owner container -->
+    <rect x="40" y="95" width="770" height="330" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="62" y="120" font-size="12" font-weight="bold" fill="#1d4ed8">inside one agent owner  (e.g. repo-analyzer)</text>
+
+    <rect x="70" y="215" width="150" height="80" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="145" y="250" text-anchor="middle" font-size="13" font-weight="bold" fill="#0f172a">app code</text>
+    <text x="145" y="270" text-anchor="middle" font-size="10" fill="#475569">the agent’s work</text>
+
+    <rect x="290" y="150" width="180" height="68" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="380" y="180" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">OpenTelemetry SDK</text>
+    <text x="380" y="197" text-anchor="middle" font-size="10" fill="#475569">Tracer + Meter providers</text>
+
+    <rect x="520" y="150" width="170" height="68" rx="8" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.5"/>
+    <text x="605" y="180" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">OTLP exporter</text>
+    <text x="605" y="197" text-anchor="middle" font-size="10" fill="#475569">TLS + bearer token</text>
+
+    <rect x="290" y="300" width="250" height="68" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+    <text x="415" y="330" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">LLM call · Langfuse decorator</text>
+    <text x="415" y="347" text-anchor="middle" font-size="10" fill="#047857">@observe → generation</text>
+
+    <rect x="70" y="386" width="690" height="30" rx="6" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1"/>
+    <text x="415" y="405" text-anchor="middle" font-size="10" fill="#334155">OTel resource on every signal: service.name · service.version · agent.id · deployment.environment  —  session.id stamped on every trace</text>
+
+    <!-- external backends -->
+    <rect x="860" y="150" width="230" height="68" rx="8" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+    <text x="975" y="180" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">OTel Collector (shared)</text>
+    <text x="975" y="197" text-anchor="middle" font-size="9.5" fill="#475569">metrics → Prometheus · spans → Tempo → Grafana</text>
+
+    <rect x="860" y="300" width="230" height="68" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+    <text x="975" y="330" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">Langfuse project — this owner</text>
+    <text x="975" y="347" text-anchor="middle" font-size="9.5" fill="#475569">one trace / session · generations + scores</text>
+
+    <!-- arrows -->
+    <line x1="220" y1="240" x2="288" y2="186" stroke="#334155" stroke-width="2" marker-end="url(#ld)"/>
+    <text x="243" y="205" font-size="12" fill="#334155">①</text>
+    <line x1="470" y1="184" x2="518" y2="184" stroke="#334155" stroke-width="2" marker-end="url(#ld)"/>
+    <line x1="690" y1="184" x2="858" y2="184" stroke="#334155" stroke-width="2" marker-end="url(#ld)"/>
+    <text x="775" y="176" text-anchor="middle" font-size="9.5" fill="#475569">OTLP :4318 · TLS + bearer</text>
+
+    <line x1="220" y1="270" x2="288" y2="332" stroke="#047857" stroke-width="2" marker-end="url(#lg)"/>
+    <text x="243" y="315" font-size="12" fill="#047857">②</text>
+    <line x1="540" y1="334" x2="858" y2="334" stroke="#047857" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#lg)"/>
+    <text x="700" y="326" text-anchor="middle" font-size="9.5" fill="#475569">Langfuse SDK (direct)</text>
+  </svg>
+  </div>
+
+  <div class="attrs"><b>Mandatory on every signal:</b> <code>service.name</code> &middot; <code>service.version</code> &middot;
+    <code>agent.id</code> &middot; <code>deployment.environment</code> (OTel resource, from <code>OTEL_RESOURCE_ATTRIBUTES</code>)
+    and <code>session.id</code> (minted by the orchestrator, on the owner&rsquo;s trace). <b><code>agent.id</code> + <code>session.id</code>
+    are the correlation keys</b> &mdash; <code>agent.id</code> identifies the owner, <code>session.id</code> joins one run across owners.</div>
+
+  <div class="scopenote"><b>No separate state store.</b> This deployment has <b>no Session Manager and no database</b>. The
+    <b>orchestrator</b> mints <code>session.id</code> and dispatches to the two owners; the key is <b>resolved at query time</b>
+    &mdash; <code>session.id</code> lives on spans in <b>Tempo</b> and on traces in each <b>Langfuse</b> project. <code>agent.id</code> +
+    <code>session.id</code> are the only correlation keys; nothing is persisted platform-side beyond the telemetry backends.</div>
+
+  <p style="page-break-before: always; margin: 0; font-size: 1px;">&nbsp;</p>
+
+  <!-- PAGE 2 -->
+  <div class="normative s1">
+    <h2><span class="badge s1">&sect;1 &middot; NORMATIVE</span>Onboarding &amp; Connectivity Requirements</h2>
+    <div class="must">Every item below is mandatory before an agent owner (repo-analyzer, bug-detector) is considered &ldquo;onboarded&rdquo;.</div>
+    <p style="margin:2px 0 8px; font-size:10px;"><b>Platform side (we provide):</b> the shared OTLP Collector endpoint (TLS), your per-owner OTLP bearer token and Langfuse project keys <i>(issued out-of-band at onboarding &mdash; never printed in this contract)</i>, the Prometheus / Tempo / Grafana backends, and a <code>session.id</code> per run. <b>Owner side (you do):</b> steps 1&ndash;6 below.</p>
+    <ol>
+      <li><b>Credentials.</b> Obtain the shared Collector&rsquo;s <b>OTLP bearer token</b> (<code>OTLP_BEARER_TOKEN</code> &mdash;
+        unauthenticated pushes are rejected with <code>401</code>; presented via <code>OTEL_EXPORTER_OTLP_HEADERS</code>) and
+        <b>your own Langfuse project keys</b>. <i>TLS is deploy-time: the same env vars switch to <code>https://</code> + the platform certificate &mdash; no code change.</i></li>
+      <li><b>SDKs.</b> Install <code>opentelemetry-sdk</code>, <code>opentelemetry-exporter-otlp-proto-http</code>, <code>langfuse</code>.</li>
+      <li><b>Identity.</b> <code>service.name</code> = <code>agent.id</code> = your owner id (<code>repo-analyzer</code> or <code>bug-detector</code>),
+        plus <code>service.version</code> and <code>deployment.environment</code>. One owner = one identity across metrics, spans, and its Langfuse project.</li>
+      <li><b>Instrument your run.</b> We hand you a <code>session.id</code> per run; wrap your work in
+        <code>propagate_attributes(session_id=&hellip;, environment=&hellip;)</code> and wrap the run root in <code>@observe()</code>
+        (LLM calls in <code>@observe(as_type="generation")</code>) &mdash; <b>one trace per session</b> in <b>your own project</b>,
+        every trace carrying <code>agent.id</code> + <code>session.id</code>.</li>
+      <li><b>Isolate &amp; flush.</b> Init Langfuse with <code>blocked_instrumentation_scopes=["&lt;your-agent&gt;.tracer"]</code>
+        so your stream-&#9312; OTel spans don&rsquo;t duplicate into Langfuse; flush the Langfuse client and <code>shutdown()</code> the OTel providers before exit.</li>
+      <li><b>Verification (definition of onboarded).</b> Onboarded only when <b>both</b> appear on our side &mdash; e.g. for the bug-detector:
+        <code>agent.invocations{agent.id="bug-detector"}</code> on Grafana/Prometheus <b>and</b> its run trace (generations + <code>session.id</code>) in the <b>bug-detector</b> Langfuse project.</li>
+    </ol>
+  </div>
+
+  <div class="normative s2">
+    <h2><span class="badge s2">&sect;2 &middot; NORMATIVE</span>Telemetry Compliance Requirements</h2>
+    <div class="must">Both owners MUST emit these &mdash; the baseline floor, each labelled <code>agent.id</code>:</div>
+    <table>
+      <tr><th>Metric (dot-style)</th><th>Type</th><th>Labels</th><th>Meaning</th></tr>
+      <tr><td><code>agent.invocations</code></td><td>counter</td><td><code>agent.id</code></td><td>Times this owner was invoked (its request count)</td></tr>
+      <tr><td><code>agent.duration</code></td><td>histogram</td><td><code>agent.id</code></td><td>Per-invocation latency (seconds)</td></tr>
+      <tr><td><code>agent.errors</code></td><td>counter</td><td><code>agent.id</code>, <code>error.type</code></td><td>Invocations that raised</td></tr>
+      <tr><td><code>gen_ai.client.token.usage</code></td><td>histogram</td><td><code>agent.id</code>, <code>gen_ai.token.type</code>, <code>gen_ai.request.model</code></td><td>LLM tokens</td></tr>
+      <tr><td><code>llm.cost.usd</code></td><td>counter</td><td><code>agent.id</code>, <code>gen_ai.request.model</code></td><td>Estimated LLM spend (USD)</td></tr>
+    </table>
+    <div class="scopenote"><b>On <code>active sessions</code> and run totals.</b> The <b>orchestrator</b> receives the run and owns the session, so
+      <code>sessions.active</code> &mdash; plus run-level <code>runs.total</code> / <code>run.duration</code> &mdash; is emitted by the
+      <b>orchestrator</b>, <b>not</b> by repo-analyzer or bug-detector. Owners emit the per-invocation baseline above and never manage sessions.</div>
+    <p style="margin:6px 0;"><b>Self-service extras</b> (optional, per the guidelines): <code>gen_ai.client.operation.duration</code>,
+      <code>gen_ai.server.time_to_first_token</code>, <code>gen_ai.finish_reasons</code>, and the bug-detector&rsquo;s
+      <code>eval.bug_recall</code> / <code>eval.judge_quality</code> (0..1).</p>
+    <p style="margin:6px 0;"><b>Langfuse rules.</b> Each owner emits to <b>its own Langfuse project</b> (repo-analyzer &rarr; its project, bug-detector &rarr; its project).
+      <b>One trace per session, per owner</b>; spans per invocation/pass and per LLM call; generations carry model + token usage + cost + (gated) content. Every trace is stamped
+      with <code>agent.id</code> + <code>session.id</code>. Eval scores attach to the owner&rsquo;s trace via the Scores API, keyed by that project&rsquo;s trace id.</p>
+    <div class="scopenote"><b>Scope &mdash; batch vs. service.</b> This deployment is a <b>batch process</b> (one run per
+      invocation, then exits); metrics flush every 5&nbsp;s and at exit. A <b>long-running service</b> deployment MUST additionally
+      emit <code>service.heartbeat</code> (continuous liveness) &mdash; not emitted here because a run-once process has no meaningful liveness to report.</div>
+  </div>
+
+  <h3>Reference implementation &mdash; real code (one agent owner)</h3>
+  <pre># env (your agent owner)
+#   OTEL_EXPORTER_OTLP_ENDPOINT = https://collector.us/        (we provide it; TLS)
+#   OTEL_EXPORTER_OTLP_HEADERS  = Authorization=Bearer%20&lt;OTLP_BEARER_TOKEN&gt;
+#   OTEL_RESOURCE_ATTRIBUTES    = service.name=&lt;your-agent&gt;,service.version=1.0.0,
+#                                 agent.id=&lt;your-agent&gt;,deployment.environment=prod
+#   LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY  (your own project keys)
+
+import time
+from opentelemetry import metrics, trace
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from langfuse import Langfuse, observe, get_client, propagate_attributes
+from your_app import provider                  # your existing LLM client: provider.chat(model, prompt) -&gt; reply(.text, .in_tokens, .out_tokens)
+
+AGENT_ID = "your-agent"                        # = service.name = agent.id
+L = {"agent.id": AGENT_ID}                     # every metric carries agent.id
+PRICE_IN, PRICE_OUT = 0.05 / 1e6, 0.20 / 1e6   # example: your model's USD per input / output token
+
+# Stream 1 (metrics): your OTel metrics -&gt; OTLP -&gt; the Collector we provide.
+# Resource.create() reads OTEL_RESOURCE_ATTRIBUTES (service.name/version, agent.id, environment).
+metrics.set_meter_provider(MeterProvider(resource=Resource.create(),
+    metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter(), export_interval_millis=5000)]))
+m = metrics.get_meter(AGENT_ID)
+
+# Stream 1 (spans): your OTel tracer -&gt; OTLP -&gt; Collector -&gt; Tempo.
+tp = TracerProvider(resource=Resource.create())
+tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+trace.set_tracer_provider(tp)
+tracer = trace.get_tracer(f"{AGENT_ID}.tracer")   # this scope is the one blocked from Langfuse below
+
+# the mandatory baseline -- one instrument each (every series labelled agent.id)
+invocations = m.create_counter("agent.invocations")
+duration    = m.create_histogram("agent.duration", unit="s")
+errors      = m.create_counter("agent.errors")
+tokens      = m.create_histogram("gen_ai.client.token.usage", unit="{token}")
+cost        = m.create_counter("llm.cost.usd")
+
+# Stream 2: your Langfuse client -&gt; your own project (keeps stream-1 spans out of Langfuse).
+Langfuse(blocked_instrumentation_scopes=[f"{AGENT_ID}.tracer"])
+
+@observe(name="agent.run")                                   # one Langfuse trace per session (stream 2)
+def run(task, *, session_id):                                # session_id is handed to you per run
+    with propagate_attributes(session_id=session_id, environment="prod", metadata=L), \
+         tracer.start_as_current_span("agent.run"):          # OTel span -&gt; Tempo (stream 1)
+        invocations.add(1, L)
+        t0 = time.perf_counter()
+        try:
+            return call_llm(task, model="gpt-oss:20b")
+        except Exception as e:
+            errors.add(1, {**L, "error.type": type(e).__name__}); raise
+        finally:
+            duration.record(time.perf_counter() - t0, L)
+
+@observe(name="llm.generate", as_type="generation")          # renders as a Langfuse generation
+def call_llm(prompt, *, model):
+    reply = provider.chat(model=model, prompt=prompt)         # your LLM call
+    ml = {**L, "gen_ai.request.model": model}
+    tokens.record(reply.in_tokens,  {**ml, "gen_ai.token.type": "input"})
+    tokens.record(reply.out_tokens, {**ml, "gen_ai.token.type": "output"})
+    cost.add(reply.in_tokens * PRICE_IN + reply.out_tokens * PRICE_OUT, ml)   # tokens x your price
+    get_client().update_current_generation(                  # stream 2: tokens/cost -&gt; Langfuse
+        model=model, usage_details={"input": reply.in_tokens, "output": reply.out_tokens})
+    return reply.text</pre>
+  <div class="must" style="margin-top:6px;">A host that co-locates both owners in one process (like this reference) instead uses one explicit <code>Langfuse(public_key=&hellip;)</code> client per project; a standalone owner needs only the simpler <code>@observe()</code> form above.</div>
+
+  <h3>Guidelines (conventions every owner MUST follow)</h3>
+  <ul>
+    <li><b>Dot-style, stable metric names</b> &mdash; <code>&lt;domain&gt;.&lt;metric&gt;</code> (<code>agent.duration</code>,
+      <code>gen_ai.*</code>, <code>eval.*</code>). Renames are breaking changes.</li>
+    <li><b>Always include <code>agent.id</code> + <code>session.id</code></b> &mdash; <code>agent.id</code> on every metric and trace,
+      <code>session.id</code> on every trace. These are the correlation keys back to the orchestrator.</li>
+    <li><b>No unbounded / high-cardinality label values</b> &mdash; no raw run ids, emails, or URLs in metric labels
+      (<code>session.id</code> rides on traces, not on metrics).</li>
+    <li><b>Never put secrets or PII</b> in labels, span names, or Langfuse payloads. Content capture is gated by
+      <code>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</code> (set <code>false</code> for metadata-only).</li>
+    <li><b>Always set <code>service.version</code></b> &mdash; regressions are tracked across releases.</li>
+    <li><b>New mandatory metrics are announced by the platform</b> (added to this contract first); <b>optional metrics are self-service</b> if they follow these conventions.</li>
+  </ul>
+</body></html>

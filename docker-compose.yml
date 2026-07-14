@@ -1,0 +1,270 @@
+# ============================================================================
+# Observability stack for the agentic app — TWO-STREAM contract:
+#   stream ① : app --OTLP(bearer)--> otel-collector --> Prometheus (metrics)
+#                                                   \-> Tempo      (spans)   --> Grafana
+#   stream ② : app --Langfuse SDK--> Langfuse  (LLM traces; NOT via collector)
+#
+# Bring up with:   docker compose up -d
+# Tear down with:  docker compose down            (keeps volumes)
+#                  docker compose down -v         (also wipes stored data)
+# ============================================================================
+
+name: agent-service
+
+services:
+
+  # --------------------------------------------------------------------------
+  # OTel Collector — the stream-① router. The app pushes OTLP here (bearer-token
+  # protected). Metrics are re-published on :8889 for Prometheus; spans are
+  # forwarded to Tempo. "contrib" image = more receivers/exporters/extensions.
+  # --------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: agent-service-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # server-side bearer token the app must present (see .env)
+      - OTLP_BEARER_TOKEN=${OTLP_BEARER_TOKEN}
+    volumes:
+      - ./infra/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC  <- app sends here
+      - "4318:4318"   # OTLP HTTP  <- app can send here instead
+      - "8889:8889"   # Prometheus scrape endpoint (collector exposes metrics here)
+    depends_on:
+      - tempo
+
+  # --------------------------------------------------------------------------
+  # Tempo — stream-①'s trace backend. Receives spans from the Collector via
+  # OTLP on its own 4317 (container-internal; no host port clash). Grafana
+  # queries it on 3200 to render span trees / flame graphs.
+  # --------------------------------------------------------------------------
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: agent-service-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP API (Grafana datasource points here)
+
+  # --------------------------------------------------------------------------
+  # Prometheus — metrics storage. It SCRAPES (pulls) the collector's :8889
+  # every few seconds. Note the direction: metrics are pull-based, traces are
+  # push-based. That asymmetry trips people up — worth remembering.
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: agent-service-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      # allow `POST /-/reload` so config changes apply without a container restart
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"   # Prometheus UI/API
+
+  # --------------------------------------------------------------------------
+  # Grafana — the dashboards. Datasources (Tempo + Prometheus) are provisioned
+  # from files so the setup is reproducible (no clicking around the UI).
+  # Login: admin / admin by default; override via GF_ADMIN_USER / GF_ADMIN_PASSWORD in .env.
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: agent-service-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # Grafana UI on host:3001 (3000 is reserved for Langfuse later)
+    depends_on:
+      - prometheus
+
+  # ==========================================================================
+  # LANGFUSE STACK — the LLM-trace backend.
+  # Layer 1: the 4 backing datastores (postgres, redis, clickhouse, minio).
+  # Layer 2: langfuse-web + langfuse-worker (added below).
+  # ==========================================================================
+
+  # --- Postgres: Langfuse's relational "app database" ------------------------
+  # Accounts, projects, API keys, settings, datasets. Small, structured data.
+  postgres:
+    image: postgres:17
+    container_name: agent-service-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"          # localhost-only: for your own psql poking
+    volumes:
+      - langfuse-postgres:/var/lib/postgresql/data
+    healthcheck:                        # "is it actually ready?" — used by depends_on
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # --- Redis: the ingestion QUEUE (+ cache) ----------------------------------
+  # langfuse-web drops incoming traces here; langfuse-worker pulls them off.
+  redis:
+    image: redis:7
+    container_name: agent-service-redis
+    restart: always
+    command: >
+      --requirepass ${REDIS_AUTH:-myredissecret}
+      --maxmemory-policy noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - langfuse-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  # --- ClickHouse: the TRACE storage (columnar, built for analytics) ---------
+  # The actual traces/observations/scores live here. This is what makes
+  # Langfuse's cost/latency charts fast over millions of traces.
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    container_name: agent-service-clickhouse
+    restart: always
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    ports:
+      - "127.0.0.1:8123:8123"          # HTTP interface
+      - "127.0.0.1:9000:9000"          # native protocol
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  # --- langfuse-worker: background trace PROCESSOR ---------------------------
+  # Pulls queued traces from Redis, writes them into ClickHouse, runs evals.
+  # The `&langfuse-worker-env` anchor lets langfuse-web REUSE this exact env
+  # block below (YAML anchors = "define once, reference with *").
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: agent-service-langfuse-worker
+    restart: always
+    depends_on: &langfuse-depends            # wait for all 4 stores to be HEALTHY
+      postgres:   { condition: service_healthy }
+      redis:      { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio:      { condition: service_healthy }
+    ports:
+      - "127.0.0.1:3030:3030"
+    environment: &langfuse-worker-env
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-postgres}
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: "true"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+      # ClickHouse (traces). Two URLs: one for migrations, one for reads/writes.
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # Redis (queue). Internal DNS name `redis`, authed with our password.
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_AUTH}
+      LANGFUSE_BULLMQ_SKIP_REDIS_VERSION_CHECK: "true"
+      # MinIO / S3 (blobs). Internal traffic uses http://minio:9000.
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-miniosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-miniosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:9190}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+  # --- langfuse-web: the UI + the trace INGESTION API ------------------------
+  # This is the container the browser opens (http://localhost:3000) AND the one
+  # our OTel Collector will send traces to. Reuses the worker's env via anchor,
+  # then adds session secret + the auto-provisioning (LANGFUSE_INIT_*) values.
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: agent-service-langfuse-web
+    restart: always
+    depends_on: *langfuse-depends
+    ports:
+      - "3000:3000"                          # <- open this in your browser
+    environment:
+      <<: *langfuse-worker-env               # inherit everything above
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
+
+  # --- MinIO: S3-compatible BLOB storage -------------------------------------
+  # Big payloads (long prompts/completions, media) are stored as files here,
+  # not as DB rows. NOTE: host port remapped 9090 -> 9190 (Prometheus owns 9090).
+  minio:
+    image: cgr.dev/chainguard/minio
+    container_name: agent-service-minio
+    restart: always
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
+    ports:
+      - "9190:9000"                     # S3 API  (host 9190 -> container 9000)
+      - "127.0.0.1:9091:9001"           # MinIO web console
+    volumes:
+      - langfuse-minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
+  langfuse-postgres:
+  langfuse-redis:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio:

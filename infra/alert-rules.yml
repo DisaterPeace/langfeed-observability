@@ -1,0 +1,48 @@
+# ============================================================================
+# Prometheus alerting rules for the agent system.
+# These appear in the Prometheus UI (/alerts) as pending/firing. To actually
+# NOTIFY (Slack/email/PagerDuty), add an Alertmanager container — that's the
+# production next step; the rules themselves are the same.
+#
+# Note the last_over_time(...) pattern again: our runs are short-lived processes,
+# so we aggregate across per-run series (see the short-lived-counter gotcha).
+# ============================================================================
+
+groups:
+  - name: agent-service-agent-alerts
+    rules:
+      # Any failed run in the last 10 minutes.
+      - alert: AgentRunFailures
+        expr: sum(last_over_time(runs_total{outcome="failure"}[10m])) > 0
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "Agent runs are failing"
+          description: "{{ $value }} failed run(s) in the last 10m."
+
+      # P95 LLM call latency above 25s (model/provider slowdown).
+      - alert: HighLLMLatencyP95
+        expr: histogram_quantile(0.95, sum by (le) (last_over_time(gen_ai_client_operation_duration_seconds_bucket[10m]))) > 25
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM call P95 latency is high"
+          description: "P95 LLM latency is {{ $value | printf \"%.1f\" }}s (>25s)."
+
+      # Average LLM-judge quality drops below 0.4 (quality regression).
+      - alert: LowEvalQuality
+        expr: (sum(last_over_time(eval_judge_quality_sum[30m])) / sum(last_over_time(eval_judge_quality_count[30m]))) < 0.4
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "Bug-detection quality is low"
+          description: "Avg LLM-judge quality is {{ $value | printf \"%.2f\" }} (<0.40)."
+
+      # Estimated spend above $0.05 in the last hour (cost guardrail).
+      - alert: HighEstimatedCost
+        expr: sum(last_over_time(llm_cost_usd_total[1h])) > 0.05
+        for: 0m
+        labels: { severity: info }
+        annotations:
+          summary: "Estimated LLM spend guardrail tripped"
+          description: "Estimated spend is ${{ $value | printf \"%.4f\" }} in the last hour."

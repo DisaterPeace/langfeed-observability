@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.claude/settings.local.json
+
+# Local data volumes (if any leak out of docker)
+data/
+*.log
+
+# Office temp/lock files
+~$*.docx

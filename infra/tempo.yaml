@@ -1,0 +1,31 @@
+# ============================================================================
+# Tempo — minimal single-binary config. Stream ①'s TRACE backend:
+#   app spans -> OTel Collector -> Tempo -> viewable in Grafana (Explore/panels)
+# Langfuse is NOT affected: stream ② (LLM traces) goes to Langfuse directly.
+# ============================================================================
+
+server:
+  http_listen_port: 3200          # Grafana queries traces here
+
+# Traces come IN from the OTel Collector (its otlp/tempo exporter).
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_duration: 5m          # flush quickly so traces appear fast in dev
+
+compactor:
+  compaction:
+    block_retention: 24h          # keep a day of traces locally
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal

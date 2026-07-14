@@ -1,0 +1,68 @@
+# ============================================================================
+# OTel Collector config — the stream-① router.
+#
+# A collector pipeline is always:  receivers -> processors -> exporters
+# A component that is DEFINED but not listed in a pipeline does nothing.
+#
+# Observability contract notes:
+#   - Incoming OTLP requires a BEARER TOKEN (extensions.bearertokenauth); the
+#     app sends it via OTEL_EXPORTER_OTLP_HEADERS. TLS is a deploy-time step
+#     (same env vars switch to https + certs) — not used on localhost.
+#   - LLM traces (stream ②) do NOT flow through this collector; the app's
+#     Langfuse SDK exports them directly to Langfuse.
+# ============================================================================
+
+# --- EXTENSIONS: cross-cutting services -------------------------------------
+extensions:
+  # Server-side auth: every incoming OTLP request must carry
+  #   Authorization: Bearer <OTLP_BEARER_TOKEN>
+  bearertokenauth:
+    scheme: Bearer
+    token: ${env:OTLP_BEARER_TOKEN}
+
+# --- RECEIVERS: how data gets IN --------------------------------------------
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
+      http:
+        endpoint: 0.0.0.0:4318   # the app pushes here (OTLP/HTTP)
+        auth:
+          authenticator: bearertokenauth
+
+# --- PROCESSORS: what happens in the MIDDLE ----------------------------------
+processors:
+  batch:
+    timeout: 1s
+
+# --- EXPORTERS: how data gets OUT ---------------------------------------------
+exporters:
+  # Stream-① traces: app spans -> Tempo (queryable in Grafana).
+  otlp/tempo:
+    endpoint: tempo:4317        # docker DNS: service name -> container
+    tls:
+      insecure: true            # plaintext inside the docker network (dev only)
+
+  # Stream-① metrics: re-published on :8889 for Prometheus to scrape.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+  # debug: prints received telemetry to the collector's own logs.
+  debug:
+    verbosity: detailed
+
+# --- SERVICE: wire everything together ----------------------------------------
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, debug]   # spans -> Tempo (+ console)
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
